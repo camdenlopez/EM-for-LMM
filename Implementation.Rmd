@@ -1,0 +1,191 @@
+---
+title: "Fitting a Linear Mixed-Effects Model using Expectation-Maximization"
+author: "Camden Lopez"
+date: "`r Sys.Date()`"
+output: pdf_document
+fontsize: 12pt
+header-includes:
+  - \usepackage{amsmath,amssymb}
+  - \DeclareMathOperator{\tr}{tr}
+  - \DeclareMathOperator{\E}{E}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(81504)
+library(lme4)
+library(mvtnorm)
+library(tidyverse)
+```
+
+## Implementation
+
+```{r}
+lmm <- function (y, X, Z, id, maxit = 1e3, tol = 1e-3) {
+  p <- ncol(X)
+  q <- ncol(Z)
+  N <- length(y)
+  
+  # Initial estimates
+  lm.fit <- lm(y ~ X - 1)
+  beta <- coef(lm.fit)
+  Sb <- diag(1, nrow = q)
+  s2 <- summary(lm.fit)$sigma^2
+  
+  # Order data by id
+  y <- y[order(id)]
+  X <- X[order(id), ]
+  Z <- Z[order(id), ]
+  id <- id[order(id)]
+  ids <- unique(id)
+  n <- length(ids)
+  
+  # -Q function for determining convergence
+  neg.Q <- NA
+  
+  for (i in 1:maxit) {
+    Sb.inv <- solve(Sb)
+    s2.inv <- 1 / s2
+    
+    # Calculate per-id quantities (E step)
+    A.inv <- array(NA, dim = c(q, q, n))
+    u <- matrix(NA, nrow = q, ncol = n)
+    Z.u <- rep(NA_real_, N)
+    tr.ZAZ <- 0
+    tr.Sb.A <- 0
+    u.Sb.u <- 0
+    for (j in 1:n) {
+      rows <- which(id == ids[j])
+      X.i <- X[rows, , drop=FALSE]
+      Z.i <- Z[rows, , drop=FALSE]
+      y.i <- y[rows]
+      A.inv[ , , j] <- solve(Sb.inv + s2.inv * t(Z.i) %*% Z.i)
+      u[, j] <- s2.inv * A.inv[ , , j] %*% t(Z.i) %*% (y.i - X.i %*% beta)
+      next.idx <- min(which(is.na(Z.u)))
+      Z.u[next.idx:(next.idx + length(rows) - 1)] <- (Z.i %*% u[, j])[, 1]
+      tr.ZAZ <- tr.ZAZ + sum(diag(Z.i %*% A.inv[ , , j] %*% t(Z.i)))
+      tr.Sb.A <- tr.Sb.A + sum(diag(solve(Sb) %*% A.inv[ , , j]))
+      u.Sb.u <- u.Sb.u + (u[, j] %*% Sb %*% u[, j])[, 1]
+    }
+    
+    # Current -Q value before M step
+    current.neg.Q <-
+      N * log(s2) +
+      n * log(det(Sb)) +
+      (1 / s2) * sum((y - X %*% beta - Z.u)^2) +
+      tr.Sb.A + u.Sb.u
+    # Check for convergence
+    if (!is.na(neg.Q) & abs(current.neg.Q - neg.Q) < tol)
+      break
+    neg.Q <- current.neg.Q
+    
+    # M step
+    beta <- (solve(t(X) %*% X) %*% t(X) %*% (y - Z.u))[, 1]
+    Sb <- (1 / n) * ((u %*% t(u)) + rowSums(A.inv, dims = 2))
+    s2 <- (1 / N) * (sum((y - X %*% beta - Z.u)^2) + tr.ZAZ)
+  }
+  
+  list(coef.fix.eff = beta,
+       cov.rand.eff = Sb,
+       var.resid = s2,
+       iter = i)
+}
+```
+
+\pagebreak
+
+## Simulation
+
+I simulate data from $n=100$ individuals with between 1 and 5 observations per individual, $\beta = (1, -1, -0.5, 0, 0)$, $\Sigma_b = \begin{bmatrix}1 & 0.5 \\ 0.5 & 1\end{bmatrix}$, and $\sigma^2 = 9$.
+
+```{r}
+n <- 100
+X <- Z <- y <- id <- NULL
+B <- c(1, -1, 0.5, 0, 0)
+Sigma.b <- rbind(c(1, 0.5), c(0.5, 1))
+s <- 3
+for (i in 1:n) {
+  n.i <- sample(1:5, 1)
+  X.i <- matrix(rnorm(n.i * 5), nrow = n.i)
+  Z.i <- X.i[, 1:2]
+  b.i <- rmvnorm(1, sigma = Sigma.b)[1,]
+  e.i <- rnorm(n.i, sd = s)
+  y.i <- (X.i %*% B + Z.i %*% b.i + e.i)[, 1]
+  X <- rbind(X, X.i)
+  Z <- rbind(Z, Z.i)
+  y <- c(y, y.i)
+  id <- c(id, rep(i, n.i))
+}
+
+# Scramble the rows to make sure that
+# lmm() handles it correctly
+idx <- sample(1:length(y))
+y <- y[idx]
+X <- X[idx, ]
+Z <- Z[idx, ]
+id <- id[idx]
+
+fit1 <- lmm(y, X, Z, id)
+fit1
+```
+
+My implementation finds estimates of $\beta$ (`coef.fix.eff`), $\Sigma_b$ (`cov.rand.eff`), and $\sigma^2$ (`var.resid`) that are reasonable, given that the random noise ($\sigma^2$) is relatively high, but with substantial error compared to the true parameter values.
+
+For comparison, I fit the same model with `lme4::lmer`:
+
+```{r}
+colnames(Z) <- paste0("Z", 1:ncol(Z))
+df <- data.frame(id, X, Z, y)
+fit2 <-
+  lmer(y ~ X1 + X2 + X3 + X4 + X5 - 1 + (Z1 + Z2 - 1 | id),
+       REML = FALSE,
+       data = df)
+summary(fit2)
+
+# Compare random effects correlation
+# to my implementation's estimate
+cov2cor(fit1$cov.rand.eff)
+```
+
+The estimates are essentially the same.
+
+\pagebreak
+
+An additional simulation shows that both models obtain highly accurate estimates with larger sample size ($n = 1000$) and smaller noise ($\sigma^2 = 1$).
+
+```{r}
+n <- 1000
+X <- Z <- y <- id <- NULL
+B <- c(1, -1, 0.5, 0, 0)
+Sigma.b <- rbind(c(1, 0.5), c(0.5, 1))
+s <- 1
+for (i in 1:n) {
+  n.i <- sample(1:5, 1)
+  X.i <- matrix(rnorm(n.i * 5), nrow = n.i)
+  Z.i <- X.i[, 1:2]
+  b.i <- rmvnorm(1, sigma = Sigma.b)[1,]
+  e.i <- rnorm(n.i, sd = s)
+  y.i <- (X.i %*% B + Z.i %*% b.i + e.i)[, 1]
+  X <- rbind(X, X.i)
+  Z <- rbind(Z, Z.i)
+  y <- c(y, y.i)
+  id <- c(id, rep(i, n.i))
+}
+
+fit1 <- lmm(y, X, Z, id)
+fit1
+```
+
+```{r}
+colnames(Z) <- paste0("Z", 1:ncol(Z))
+df <- data.frame(id, X, Z, y)
+fit2 <-
+  lmer(y ~ X1 + X2 + X3 + X4 + X5 - 1 + (Z1 + Z2 - 1 | id),
+       REML = FALSE,
+       data = df)
+summary(fit2)
+
+# Compare random effects correlation
+# to my implementation's estimate
+cov2cor(fit1$cov.rand.eff)
+```

@@ -1,0 +1,180 @@
+---
+title: "Fitting a Linear Mixed-Effects Model using Expectation-Maximization"
+author: "Camden Lopez"
+date: "`r Sys.Date()`"
+output: pdf_document
+fontsize: 12pt
+header-includes:
+  - \usepackage{amsmath,amssymb}
+  - \DeclareMathOperator{\tr}{tr}
+  - \DeclareMathOperator{\E}{E}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Problem Statement
+
+Assume that for $i = 1, \dots, n$,
+
+* $Y_i = X_i \beta + Z_i b_i + \epsilon_i$
+* $X_i$ is a fixed $n_i \times p$ matrix
+* $Z_i$ is a fixed $n_i \times q$ matrix
+* $b_i \sim \text{N}_q(0, \Sigma_b)$,
+* $\epsilon_i \sim \text{N}_{n_i}(0, \sigma^2 I_{n_i})$
+* $b_i$ and $\epsilon_i$ are independent
+* $(b_i, \epsilon_i)$ and $(b_j, \epsilon_j)$ are independent for all $i \ne j$
+
+Given $(X_i, Z_i, Y_i)$ for $i=1,\dots,n$, we want to estimate $\beta$, $\Sigma_b$, and $\sigma^2$ using the expectation-maximization (EM) algorithm.
+
+The likelihood function is
+
+\begin{equation*}
+L(\beta, \Sigma_b, \sigma^2) = \prod_{i=1}^n f(y_i|b_i,\beta,\sigma^2) g(b_i|\Sigma_b)
+\end{equation*}
+
+where $f$ is the density of $y_i$ conditional on $b_i$, and $g$ is the density of $b_i$.
+
+\begin{align*}
+f(y_i|b_i,\beta,\sigma^2) &= (2\pi)^{-n_i/2} (\sigma^2)^{-n_i/2} \exp\left[ -\frac{1}{2\sigma^2} (y_i - X_i \beta - Z_i b_i)^\intercal (y_i - X_i \beta - Z_i b_i) \right] \\
+g(b_i|\Sigma_b) &=
+(2\pi)^{-q/2} |\Sigma_b|^{-1/2} \exp\left[ -\frac{1}{2} b_i^\intercal \Sigma_b^{-1} b_i \right]
+\end{align*}
+
+The log-likelihood is
+
+\begin{align*}
+l(\beta, \Sigma_b, \sigma^2) &= \sum_{i=1}^n \left[ \log f(y_i|b_i,\beta,\sigma^2) + \log g(b_i|\Sigma_b) \right] \\
+&= \sum_{i=1}^n [ -\frac{n_i}{2}\log(2\pi) - \frac{n_i}{2} \log(\sigma^2) - \frac{1}{2\sigma^2} (y_i - X_i \beta - Z_i b_i)^\intercal (y_i - X_i \beta - Z_i b_i) \\
+&\ \ \ \ \ \ -\frac{q}{2}\log(2\pi) - \frac{1}{2}\log |\Sigma_b| - \frac{1}{2} b_i^\intercal \Sigma_b^{-1} b_i ]
+\end{align*}
+
+## E-Step Derivation
+
+For the EM algorithm, first we set some initial values of the parameters, $\beta^{(0)}$, $\Sigma_b^{(0)}$, and $\sigma^{2(0)}$. Then, given current estimates $\beta^{(k)}$, $\Sigma_b^{(k)}$, and $\sigma^{2(k)}$, we calculate $Q(\beta, \Sigma_b, \sigma^2 | \beta^{(k)}, \Sigma_b^{(k)}, \sigma^{2(k)})$, the expectation of $l(\beta, \Sigma_b, \sigma^2)$ over the distribution of $b = (b_1, \dots, b_n)$ conditional on $y = (y_1, \dots, y_n)$.
+
+The conditional distribution of $b_i|y_i$ has pdf $f(y_i|b_i) g(b_i) / h(y_i)$ where $h$ is the marginal pdf of $y_i$. We find the distribution of $b_i|y_i$ by looking at the kernel of $f(y_i|b_i) g(b_i) / h(y_i)$:
+
+\begin{align*}
+\frac{f(y_i|b_i) g(b_i)}{h(y_i)} &\propto \exp \left\{ -\frac{1}{2\sigma^2} (y_i - X_i \beta - Z_i b_i)^\intercal (y_i - X_i \beta - Z_i b_i) - \frac{1}{2} b_i^\intercal \Sigma_b^{-1} b_i \right\} \\
+& \text{ (letting } r_i = y_i - X_i\beta \text{)} \\
+&= \exp \left\{ -\frac{1}{2} \left[ \frac{1}{\sigma^2}r_i^\intercal r_i - \frac{2}{\sigma^2} b_i^\intercal Z_i^\intercal r_i + \frac{1}{\sigma^2} b_i^\intercal Z_i^\intercal Z_i b_i + b_i^\intercal \Sigma_b^{-1} b_i \right] \right\} \\
+&= \exp \left\{ -\frac{1}{2} \left[ b_i^\intercal \left(\Sigma_b^{-1} + \frac{1}{\sigma^2} Z_i^\intercal Z_i\right) b_i - \frac{2}{\sigma^2} b_i^\intercal Z_i^\intercal r_i + \frac{1}{\sigma^2}r_i^\intercal r_i \right] \right\}
+\end{align*}
+
+Now we complete the square:
+
+$x^\intercal A x + x^\intercal b + c = (x - u)^\intercal A (x - u) + v$, where $u = -\frac{1}{2}A^{-1}b$ and $v = c - \frac{1}{4} b^\intercal A^{-1} b$.
+
+We have
+
+\begin{align*}
+A &= \Sigma_b^{-1} + \frac{1}{\sigma^2} Z_i^\intercal Z_i \\
+b &= -\frac{2}{\sigma^2} Z_i^\intercal r_i \\
+\Rightarrow u &= -\frac{1}{2} \left( \Sigma_b^{-1} + \frac{1}{\sigma^2} Z_i^\intercal Z_i \right)^{-1} \left( -\frac{2}{\sigma^2} Z_i^\intercal r_i \right) \\
+&= \frac{1}{\sigma^2} \left( \Sigma_b^{-1} + \frac{1}{\sigma^2} Z_i^\intercal Z_i \right)^{-1} Z_i^\intercal r_i
+\end{align*}
+
+We don't need to calculate $v$ because it won't involve $b_i$.
+
+Therefore,
+
+\begin{align*}
+\frac{f(y_i|b_i) g(b_i)}{h(y_i)} &\propto \exp \left\{ -\frac{1}{2} [b_i - u_i]^\intercal A_i [b_i - u_i] \right\}
+\end{align*}
+
+which means that $b_i|y_i \sim \text{N}(u_i, A_i^{-1})$ where $u_i$ and $A_i$ are defined above.
+
+Now, to obtain the $Q$ function from the log-likelihood, we'll use the following expectations:
+
+\begin{align*}
+\E_{b_i|y_i} b_i^\intercal Z_i^\intercal r_i &= u_i^\intercal Z_i^\intercal r_i \\
+\E_{b_i|y_i} b_i^\intercal Z_i^\intercal Z_i b_i &= \tr(Z_i^\intercal Z_i A_i^{-1}) + u_i^\intercal Z_i^\intercal Z_i u_i \\
+&= \tr(Z_i A_i^{-1} Z_i^\intercal) + u_i^\intercal Z_i^\intercal Z_i u_i \\
+\E_{b_i|y_i} b_i^\intercal \Sigma_b^{-1} b_i &= \tr(\Sigma_b^{-1} A_i^{-1}) + u_i^\intercal \Sigma_b^{-1} u_i
+\end{align*}
+
+We have
+
+\begin{align*}
+& Q(\beta,\Sigma_b,\sigma^2|\beta^{(k)},\Sigma_b^{(k)},\sigma^{2(k)}) \\
+&= \sum_{i=1}^n [ -\frac{n_i}{2}\log(2\pi) - \frac{n_i}{2} \log(\sigma^2) - \frac{1}{2\sigma^2} r_i^\intercal r_i + \frac{1}{\sigma^2} u_i^\intercal Z_i^\intercal r_i \\
+&\ \ \ \ \ \ -\frac{1}{2\sigma^2} \tr(Z_i A_i^{-1} Z_i^\intercal) - \frac{1}{2\sigma^2} u_i^\intercal Z_i^\intercal Z_i u_i \\
+&\ \ \ \ \ \ -\frac{q}{2}\log(2\pi) - \frac{1}{2}\log |\Sigma_b| \\
+&\ \ \ \ \ \ - \frac{1}{2} \tr(\Sigma_b^{-1} A_i^{-1}) - \frac{1}{2} u_i^\intercal \Sigma_b^{-1} u_i ] \\
+&= C - \frac{N}{2}\log(\sigma^2) - \frac{n}{2} \log |\Sigma_b| \\
+&\ \ \ \ \ \ -\frac{1}{2\sigma^2} \sum_{i=1}^n r_i^\intercal r_i + \frac{1}{\sigma^2} \sum_{i=1}^n u_i^\intercal Z_i^\intercal r_i - \frac{1}{2\sigma^2} \sum_{i=1}^n u_i^\intercal Z_i^\intercal Z_i u_i \\
+&\ \ \ \ \ \ -\frac{1}{2\sigma^2} \sum_{i=1}^n \tr(Z_i A_i^{-1} Z_i^\intercal) \\
+&\ \ \ \ \ \ - \frac{1}{2} \sum_{i=1}^n \tr(\Sigma_b^{-1}A_i^{-1}) - \frac{1}{2} \sum_{i=1}^n u_i^\intercal \Sigma_b^{-1} u_i 
+\end{align*}
+
+where $C$ is a constant, and $N = \sum_{i=1}^n n_i$.
+
+## M-Step Derivation
+
+For the maximization step, we find $\beta,\Sigma_b,\sigma^2$ that maximize $Q$.
+
+Setting the gradient of $Q$ wrt $\beta$ equal to 0 and solving, we have
+
+\begin{align*}
+\nabla_\beta Q &= 0 \\
+\Rightarrow 0 &= \frac{1}{\sigma^2} \sum_{i=1}^n X_i^\intercal (y_i - X_i\beta) - \frac{1}{\sigma^2} \sum_{i=1}^n X_i^\intercal Z_i u_i \\
+\Rightarrow 0 &= \sum_{i=1}^n X_i^\intercal y_i - \sum_{i=1}^n (X_i^\intercal X_i)\beta - \sum_{i=1}^n X_i^\intercal Z_i u_i \\
+\Rightarrow \beta &= \left( \sum_{i=1}^n X_i^\intercal X_i \right)^{-1} \sum_{i=1}^n X_i^\intercal (y_i - Z_i u_i) \\
+&= \text{OLS estimate after subtracting predicted random effects from }y_i
+\end{align*}
+
+Setting the gradient of $Q$ wrt $\Sigma_b$  equal to 0 and solving, we have
+
+***
+
+\begin{footnotesize}
+\emph{Reference for derivative-wrt-matrix identities:}
+
+https://www.ics.uci.edu/~welling/teaching/KernelsICS273B/MatrixCookBook.pdf
+\end{footnotesize}
+
+***
+
+\begin{align*}
+\nabla_{\Sigma_b} Q &= 0 \\
+\Rightarrow 0 &= -\frac{n}{2}\Sigma_b^{-1} + \frac{1}{2} \sum_{i=1}^n (\Sigma_b^{-1} A_i^{-1} \Sigma_b^{-1}) + \frac{1}{2}\sum_{i=1}^n (\Sigma_b^{-1} u_i u_i^\intercal \Sigma_b^{-1}) \\
+\Rightarrow n \Sigma_b \Sigma_b^{-1} \Sigma_b &= \sum_{i=1}^n \Sigma_b \Sigma_b^{-1} u_i u_i^\intercal \Sigma_b^{-1} \Sigma_b + \sum_{i=1}^n \Sigma_b \Sigma_b^{-1} A_i^{-1} \Sigma_b^{-1} \Sigma_b \\
+\Rightarrow \Sigma_b &= \frac{1}{n} \sum_{i=1}^n u_i u_i^\intercal + \frac{1}{n} \sum_{i=1}^n A_i^{-1} \\
+&= \text{Covariance of conditional means of }b_i + \text{Mean of conditional covariances of }b_i
+\end{align*}
+
+Finally, setting the gradient of $Q$ wrt $\sigma^2$, we have
+
+\begin{align*}
+\nabla_{\sigma^2} Q &= 0 \\
+\Rightarrow 0 &= -\frac{N}{2\sigma^2} + \frac{1}{2(\sigma^2)^2} \sum_{i=1}^n r_i^\intercal r_i - \frac{1}{2(\sigma^2)^2} 2\sum_{i=1}^n r_i^\intercal Z_i u_i + \frac{1}{2(\sigma^2)^2} \sum_{i=1}^n u_i^\intercal Z_i^\intercal Z_i u_i \\
+&\ \ \ \ \ \ + \frac{1}{2(\sigma^2)^2} \sum_{i=1}^n \tr(Z_i A_i^{-1} Z_i^\intercal) \\
+\Rightarrow N\sigma^2 &= \sum_{i=1}^n (r_i - Z_i u_i)^\intercal (r_i - Z_i u_i) + \sum_{i=1}^n \tr(Z_i A_i^{-1} Z_i^\intercal) \\
+\Rightarrow \sigma^2 &= \frac{1}{N} \sum_{i=1}^n (y_i - X_i\beta - Z_i u_i)^\intercal (y_i - X_i\beta - Z_i u_i) + \frac{1}{N} \sum_{i=1}^n \tr(Z_i A_i^{-1} Z_i^\intercal) \\
+&= \text{Variance from deviations of }y_i\text{ from conditional mean } \\
+&\ \ \ \ \ \ + \text{Variance from random effects}
+\end{align*}
+
+where we substitute $\beta$ with the estimate derived above, $\left( \sum_{i=1}^n X_i^\intercal X_i \right)^{-1} \sum_{i=1}^n X_i^\intercal (y_i - Z_i u_i)$.
+
+## Algorithm
+
+Putting this all together, an EM algorithm for estimating $\beta$, $\Sigma_b$, and $\sigma^2$ is
+
+1. Set $\beta^{(0)}$ (e.g. with OLS estimates), $\Sigma_b^{(0)}$ (e.g. with $I_q$), and $\sigma^{2(0)}$ (e.g. with OLS estimate).
+2. At iteration $k$ (E step), given current estimates $\beta^{(k)}$, $\Sigma_b^{(k)}$, and $\sigma^{2(k)}$,
+
+    * Calculate $A_i^{-1} = \left( \Sigma_b^{-1(k)} + \frac{1}{\sigma^{2(k)}} Z_i^\intercal Z_i \right)^{-1}$, $i=1,\dots,n$.
+    * Calculate $u_i = \frac{1}{\sigma^{2(k)}} A_i^{-1} Z_i^\intercal (y_i - X_i\beta^{(k)})$, $i=1,\dots,n$.
+
+3. (Iteration $k$, M step) Calculate new estimates using $u_1, \dots, u_n$ and $A_1^{-1}, \dots, A_n^{-1}$:
+
+\begin{align*}
+\beta^{(k+1)} &= \left( \sum_{i=1}^n X_i^\intercal X_i \right)^{-1} \sum_{i=1}^n X_i^\intercal (y_i - Z_i u_i) \\
+\Sigma_b^{(k+1)} &= \frac{1}{n} \sum_{i=1}^n u_i u_i^\intercal + \frac{1}{n} \sum_{i=1}^n A_i^{-1} \\
+\sigma^{2(k)} &= \frac{1}{N} \sum_{i=1}^n (y_i - X_i\beta^{(k+1)} - Z_i u_i)^\intercal (y_i - X_i\beta^{(k+1)} - Z_i u_i) + \frac{1}{N} \sum_{i=1}^n \tr(Z_i A_i^{-1} Z_i^\intercal)
+\end{align*}
+
+4. Continue with iterations of steps 2--3 until convergence.
